@@ -33,12 +33,15 @@
 
 ccflags-y := -Wall
 
-# ccflags-y += -DBLK_MQ_MODE
+#ccflags-y += -DBLK_MQ_MODE
 # CFLAGS_sbdd.o := -DDEBUG
 
 ccflags-y += -I$(src)/sbdd
 
 sbdd-y := sbdd/src/sbdd.o
 sbdd-y += sbdd/src/disk.o
+sbdd-y += sbdd/src/open.o
+sbdd-y += sbdd/src/ioctl.o
+sbdd-y += sbdd/src/io.o
 
 obj-m += sbdd.o

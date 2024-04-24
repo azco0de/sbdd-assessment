@@ -17,109 +17,14 @@
 #include <linux/moduleparam.h>
 
 #include <disk.h>
+#include <open.h>
+#include <ioctl.h>
+#include <io.h>
 
 static struct sbdd      __sbdd;
 static int              __sbdd_major = 0;
 static unsigned long    __sbdd_capacity_mib = 100;
 
-static sector_t sbdd_xfer(struct bio_vec* bvec, sector_t pos, int dir)
-{
-	void *buff = kmap_atomic(bvec->bv_page) + bvec->bv_offset;
-	sector_t len = bvec->bv_len >> SBDD_SECTOR_SHIFT;
-	size_t offset;
-	size_t nbytes;
-
-	if (pos + len > __sbdd.capacity)
-		len = __sbdd.capacity - pos;
-
-	offset = pos << SBDD_SECTOR_SHIFT;
-	nbytes = len << SBDD_SECTOR_SHIFT;
-
-	spin_lock(&__sbdd.datalock);
-
-	if (dir)
-		memcpy(__sbdd.data + offset, buff, nbytes);
-	else
-		memcpy(buff, __sbdd.data + offset, nbytes);
-
-	spin_unlock(&__sbdd.datalock);
-
-	pr_debug("pos=%6llu len=%4llu %s\n", pos, len, dir ? "written" : "read");
-
-	kunmap_atomic(buff);
-	return len;
-}
-
-static void sbdd_xfer_bio(struct bio *bio)
-{
-	struct bvec_iter iter;
-	struct bio_vec bvec;
-	int dir = bio_data_dir(bio);
-	sector_t pos = bio->bi_iter.bi_sector;
-
-	bio_for_each_segment(bvec, bio, iter)
-		pos += sbdd_xfer(&bvec, pos, dir);
-}
-
-static blk_qc_t sbdd_submit_bio(struct bio *bio)
-{
-	if (atomic_read(&__sbdd.deleting)) {
-		bio_io_error(bio);
-		return BLK_STS_IOERR;
-	}
-
-	if (!atomic_inc_not_zero(&__sbdd.refs_cnt)) {
-		bio_io_error(bio);
-		return BLK_STS_IOERR;
-	}
-
-	sbdd_xfer_bio(bio);
-	bio_endio(bio);
-
-	if (atomic_dec_and_test(&__sbdd.refs_cnt))
-		wake_up(&__sbdd.exitwait);
-
-	return BLK_STS_OK;
-}
-
-#ifdef BLK_MQ_MODE
-static void sbdd_xfer_rq(struct request *rq)
-{
-	struct req_iterator iter;
-	struct bio_vec bvec;
-	int dir = rq_data_dir(rq);
-	sector_t pos = blk_rq_pos(rq);
-
-	rq_for_each_segment(bvec, rq, iter)
-		pos += sbdd_xfer(&bvec, pos, dir);
-}
-
-static blk_status_t sbdd_queue_rq(struct blk_mq_hw_ctx *hctx,
-                                  struct blk_mq_queue_data const *bd)
-{
-	if (atomic_read(&__sbdd.deleting))
-		return BLK_STS_IOERR;
-
-	if (!atomic_inc_not_zero(&__sbdd.refs_cnt))
-		return BLK_STS_IOERR;
-
-	blk_mq_start_request(bd->rq);
-	sbdd_xfer_rq(bd->rq);
-	blk_mq_end_request(bd->rq, BLK_STS_OK);
-
-	if (atomic_dec_and_test(&__sbdd.refs_cnt))
-		wake_up(&__sbdd.exitwait);
-
-	return BLK_STS_OK;
-}
-#else
-#if (BUILT_KERNEL_VERSION < KERNEL_VERSION(5, 14, 0))
-static blk_qc_t sbdd_make_request(struct request_queue *q, struct bio *bio)
-{
-	return sbdd_submit_bio(bio);
-}
-#endif
-#endif
 
 #ifdef BLK_MQ_MODE
 static struct blk_mq_ops const __sbdd_blk_mq_ops = {
@@ -142,6 +47,9 @@ the request() function associated with the request queue of the disk.
 */
 static struct block_device_operations const __sbdd_bdev_ops = {
 	.owner = THIS_MODULE,
+	.open = sbdd_open,
+	.release = sbdd_release,
+	.ioctl = sbdd_ioctl,
 #ifndef BLK_MQ_MODE
 #if (BUILT_KERNEL_VERSION > KERNEL_VERSION(5, 8, 0))
 	.submit_bio = sbdd_submit_bio,
@@ -191,12 +99,16 @@ static int sbdd_create(void)
 	}
 
 	/* Configure queue */
+	__sbdd.gd->queue->queuedata = &__sbdd;
+
 	blk_queue_logical_block_size(__sbdd.gd->queue, SBDD_SECTOR_SIZE);
 #if (BUILT_KERNEL_VERSION < KERNEL_VERSION(5, 14, 0))
 	blk_queue_make_request(__sbdd.gd->queue, sbdd_make_request);
 #endif
 
 	/* Configure gendisk */
+	__sbdd.gd->private_data = &__sbdd;
+
 	__sbdd.gd->major = __sbdd_major;
 	__sbdd.gd->first_minor = 0;
 	__sbdd.gd->minors = 1;

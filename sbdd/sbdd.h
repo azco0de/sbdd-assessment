@@ -1,3 +1,6 @@
+#ifndef _SBDD_DEVICE_H_
+#define _SBDD_DEVICE_H_
+
 #include <linux/fs.h>
 #include <linux/genhd.h>
 #include <linux/blkdev.h>
@@ -21,3 +24,5 @@ struct sbdd {
 	struct gendisk          *gd;
     struct blk_mq_tag_set   *tag_set;
 };
+
+#endif
