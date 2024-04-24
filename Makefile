@@ -35,7 +35,33 @@
 
 ######## Makefile
 
-default:
-	$(MAKE) -C /lib/modules/$(shell uname -r)/build M=$(shell pwd) modules
+DEVICE_NAME		?= sbdd
+MODULE_NAME		?= $(DEVICE_NAME).ko
+MAKEFILE_PATH	?= $(PWD)/build/Makefile
+BUILD_DIR 		?= $(PWD)/build
+KERNEL_DIR		?= /lib/modules/$(shell uname -r)/build
+KERNEL_VER		?= $(shell uname -r | cut -f1 -d'-')
+
+
+split-string-dot = $(word $2,$(subst ., ,$1))
+
+k_ver_major := $(call split-string-dot,$(KERNEL_VER:%=%),1)
+k_ver_minor := $(call split-string-dot,$(KERNEL_VER),2)
+k_ver_patch := $(call split-string-dot,$(KERNEL_VER),3)
+
+build: $(MAKEFILE_PATH)
+	make -C $(KERNEL_DIR) M=$(BUILD_DIR) src=$(PWD) modules
+
+$(KERNEL_VER):
+	touch "$(PWD)/sbdd/kernel_version.h"
+	echo "#include <linux/version.h> \n\n"\
+		"#define BUILT_KERNEL_VERSION KERNEL_VERSION($(k_ver_major),$(k_ver_minor),$(k_ver_patch))" > $(PWD)/sbdd/kernel_version.h
+
+$(BUILD_DIR): $(KERNEL_VER)
+	mkdir -p "$@"
+
+$(MAKEFILE_PATH): $(BUILD_DIR)
+	touch "$@"
+
 clean:
-	$(MAKE) -C /lib/modules/$(shell uname -r)/build M=$(shell pwd) clean
+	make -C $(KERNEL_DIR) M=$(BUILD_DIR) src=$(PWD) clean

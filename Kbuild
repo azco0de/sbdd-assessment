@@ -32,7 +32,13 @@
 ######## Kbuild
 
 ccflags-y := -Wall
+
 # ccflags-y += -DBLK_MQ_MODE
 # CFLAGS_sbdd.o := -DDEBUG
 
-obj-m := sbdd.o
+ccflags-y += -I$(src)/sbdd
+
+sbdd-y := sbdd/src/sbdd.o
+sbdd-y += sbdd/src/disk.o
+
+obj-m += sbdd.o
