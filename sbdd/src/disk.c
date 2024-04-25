@@ -5,7 +5,7 @@
 
 int sbdd_alloc_disk(struct sbdd* device, const struct blk_mq_ops* mqops)
 {
-  	int ret = 0;
+  	int _ret = 0;
 
     if(mqops != NULL)
     {
@@ -24,10 +24,10 @@ int sbdd_alloc_disk(struct sbdd* device, const struct blk_mq_ops* mqops)
         device->tag_set->numa_node = NUMA_NO_NODE;
         device->tag_set->ops = mqops;
 
-        ret = blk_mq_alloc_tag_set(device->tag_set);
-        if (ret) {
-            pr_err("call blk_mq_alloc_tag_set() failed with %d\n", ret);
-            return ret;
+        _ret = blk_mq_alloc_tag_set(device->tag_set);
+        if (_ret) {
+            pr_err("call blk_mq_alloc_tag_set() failed with %d\n", _ret);
+            return _ret;
         }
 
 #if (BUILT_KERNEL_VERSION < KERNEL_VERSION(5, 14, 0))
@@ -36,10 +36,10 @@ int sbdd_alloc_disk(struct sbdd* device, const struct blk_mq_ops* mqops)
         pr_info("initing mq queue\n");
         device->gd->queue = blk_mq_init_queue(device->tag_set);
         if (IS_ERR(device->gd->queue)) {
-            ret = (int)PTR_ERR(device->gd->queue);
-            pr_err("call blk_mq_init_queue() failed witn %d\n", ret);
+            _ret = (int)PTR_ERR(device->gd->queue);
+            pr_err("call blk_mq_init_queue() failed witn %d\n", _ret);
             device->gd->queue = NULL;
-            return ret;
+            return _ret;
         }
 #endif
 
@@ -70,7 +70,7 @@ int sbdd_alloc_disk(struct sbdd* device, const struct blk_mq_ops* mqops)
             return -EINVAL;
         }
 
-        blk_queue_make_request(device->gd->queue, sbdd_make_request);
+        blk_queue_make_request(device->gd->queue, sbdd_io_make_request);
 #endif
 
 #if (BUILT_KERNEL_VERSION > KERNEL_VERSION(5, 14, 0))
@@ -83,7 +83,7 @@ int sbdd_alloc_disk(struct sbdd* device, const struct blk_mq_ops* mqops)
 #endif
     }
 
-	return ret;  
+	return _ret;  
 }
 
 void sbdd_free_disk(struct sbdd* device)

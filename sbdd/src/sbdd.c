@@ -25,6 +25,10 @@ static struct sbdd      __sbdd;
 static int              __sbdd_major = 0;
 static unsigned long    __sbdd_capacity_mib = 100;
 
+static int __process_bio(struct bio* io)
+{
+    return 1;
+}
 
 #ifdef BLK_MQ_MODE
 static struct blk_mq_ops const __sbdd_blk_mq_ops = {
@@ -37,7 +41,7 @@ static struct blk_mq_ops const __sbdd_blk_mq_ops = {
 	blk_mq_requeue_request() - to re-send the request in the queue
 	blk_mq_end_request()     - to end request processing and notify upper layers
 	*/
-	.queue_rq = sbdd_queue_rq,
+	.queue_rq = sbdd_io_queue_rq,
 };
 #endif
 
@@ -52,7 +56,7 @@ static struct block_device_operations const __sbdd_bdev_ops = {
 	.ioctl = sbdd_ioctl,
 #ifndef BLK_MQ_MODE
 #if (BUILT_KERNEL_VERSION > KERNEL_VERSION(5, 8, 0))
-	.submit_bio = sbdd_submit_bio,
+	.submit_bio = sbdd_io_submit_bio,
 #endif
 #endif
 };
@@ -76,16 +80,6 @@ static int sbdd_create(void)
 
 	__sbdd.capacity = (sector_t)__sbdd_capacity_mib * SBDD_MIB_SECTORS;
 
-	pr_info("allocating data\n");
-	__sbdd.data = vzalloc(__sbdd.capacity << SBDD_SECTOR_SHIFT);
-	if (!__sbdd.data) {
-		pr_err("unable to alloc data\n");
-		return -ENOMEM;
-	}
-
-	spin_lock_init(&__sbdd.datalock);
-	init_waitqueue_head(&__sbdd.exitwait);
-
 	pr_info("allocating disk\n");
 
 #ifdef BLK_MQ_MODE
@@ -103,7 +97,7 @@ static int sbdd_create(void)
 
 	blk_queue_logical_block_size(__sbdd.gd->queue, SBDD_SECTOR_SIZE);
 #if (BUILT_KERNEL_VERSION < KERNEL_VERSION(5, 14, 0))
-	blk_queue_make_request(__sbdd.gd->queue, sbdd_make_request);
+	blk_queue_make_request(__sbdd.gd->queue, sbdd_io_make_request);
 #endif
 
 	/* Configure gendisk */
@@ -119,6 +113,22 @@ static int sbdd_create(void)
 	set_capacity(__sbdd.gd, __sbdd.capacity);
 	atomic_set(&__sbdd.refs_cnt, 1);
 
+	/* Create io */
+	ret = sbdd_io_create(&__sbdd.io, __process_bio, &__sbdd);
+	if(ret)
+	{
+		pr_err("creating io error=%d\n", ret);
+		return ret;
+	}
+
+	/* Create disks cluster */
+	ret = sbdd_cluster_create(&__sbdd.cluster, &__sbdd);
+	if(ret)
+	{
+		pr_err("creating cluster error=%d\n", ret);
+		return ret;
+	}
+
 	/*
 	Allocating gd does not make it available, add_disk() required.
 	After this call, gd methods can be called at any time. Should not be
@@ -130,26 +140,25 @@ static int sbdd_create(void)
 	if(ret)
 	{
 		pr_err("adding disk error=%d\n", ret);
+		return ret;
 	}
 #else
 	add_disk(__sbdd.gd);
 #endif
 
-	return ret;
+	return 0;
 }
 
 static void sbdd_delete(void)
 {
-	atomic_set(&__sbdd.deleting, 1);
-	atomic_dec(&__sbdd.refs_cnt);
-	wait_event(__sbdd.exitwait, !atomic_read(&__sbdd.refs_cnt));
+	/* Blocking call to io */
+	sbdd_io_stop(&__sbdd.io);
+	
+	sbdd_io_destroy(&__sbdd.io);
+
+	sbdd_cluster_destroy(&__sbdd.cluster);
 
 	sbdd_free_disk(&__sbdd);
-
-	if (__sbdd.data) {
-		pr_info("freeing data\n");
-		vfree(__sbdd.data);
-	}
 
 	memset(&__sbdd, 0, sizeof(struct sbdd));
 

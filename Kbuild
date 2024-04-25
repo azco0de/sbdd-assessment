@@ -43,5 +43,6 @@ sbdd-y += sbdd/src/disk.o
 sbdd-y += sbdd/src/open.o
 sbdd-y += sbdd/src/ioctl.o
 sbdd-y += sbdd/src/io.o
+sbdd-y += sbdd/src/cluster.o
 
 obj-m += sbdd.o
