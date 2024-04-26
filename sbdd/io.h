@@ -11,7 +11,7 @@
 #include <linux/spinlock_types.h>
 #include <linux/blk-mq.h>
 
-typedef int (*process_bio_t) (struct bio *bio);
+typedef blk_qc_t (*process_bio_t) (struct bio *bio);
 
 struct sbdd_io {
     void*                   ctx;

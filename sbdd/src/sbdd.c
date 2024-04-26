@@ -17,17 +17,61 @@
 #include <linux/moduleparam.h>
 
 #include <disk.h>
-#include <open.h>
-#include <ioctl.h>
 #include <io.h>
 
 static struct sbdd      __sbdd;
 static int              __sbdd_major = 0;
 static unsigned long    __sbdd_capacity_mib = 100;
+static unsigned long    __sbdd_raid_type = 0;
+static char*			__sbdd_raid_config = NULL;
 
-static int __process_bio(struct bio* io)
+static int __sbdd_create_raid(void)
 {
-    return 1;
+	int ret = 0;
+
+	process_bio_t _process_bio = NULL;
+
+	/* Check if raid type is supported*/
+	if(__sbdd_raid_type > 1)
+	{
+		pr_err("wrong raid type: %ld\n", __sbdd_raid_type);
+		return -ENAVAIL;
+	}
+
+	if(__sbdd_raid_type == 0)
+	{
+		ret = sbdd_raid_0_create(&__sbdd.raid_0, __sbdd_raid_config, &__sbdd);
+		if(ret)
+		{
+			pr_err("creating raid_0 error=%d\n", ret);
+			return ret;
+		}
+
+		_process_bio = sbdd_raid_0_process_bio;
+	}
+
+	/* Create raid io */
+	ret = sbdd_io_create(&__sbdd.io, _process_bio, &__sbdd);
+	if(ret)
+	{
+		pr_err("creating io error=%d\n", ret);
+		return ret;
+	}
+
+	return 0;
+}
+
+static void __sbdd_destroy_raid(void)
+{
+	/* Blocking call to io */
+	sbdd_io_stop(&__sbdd.io);
+
+	sbdd_io_destroy(&__sbdd.io);
+
+	if(__sbdd_raid_type == 0)
+	{
+		sbdd_raid_0_destroy(&__sbdd.raid_0);
+	}
 }
 
 #ifdef BLK_MQ_MODE
@@ -51,9 +95,6 @@ the request() function associated with the request queue of the disk.
 */
 static struct block_device_operations const __sbdd_bdev_ops = {
 	.owner = THIS_MODULE,
-	.open = sbdd_open,
-	.release = sbdd_release,
-	.ioctl = sbdd_ioctl,
 #ifndef BLK_MQ_MODE
 #if (BUILT_KERNEL_VERSION > KERNEL_VERSION(5, 8, 0))
 	.submit_bio = sbdd_io_submit_bio,
@@ -77,7 +118,6 @@ static int sbdd_create(void)
 	}
 
 	memset(&__sbdd, 0, sizeof(struct sbdd));
-
 	__sbdd.capacity = (sector_t)__sbdd_capacity_mib * SBDD_MIB_SECTORS;
 
 	pr_info("allocating disk\n");
@@ -102,30 +142,21 @@ static int sbdd_create(void)
 
 	/* Configure gendisk */
 	__sbdd.gd->private_data = &__sbdd;
-
 	__sbdd.gd->major = __sbdd_major;
 	__sbdd.gd->first_minor = 0;
 	__sbdd.gd->minors = 1;
 	__sbdd.gd->fops = &__sbdd_bdev_ops;
-
 	/* Represents name in /proc/partitions and /sys/block */
 	scnprintf(__sbdd.gd->disk_name, DISK_NAME_LEN, SBDD_NAME);
 	set_capacity(__sbdd.gd, __sbdd.capacity);
+
 	atomic_set(&__sbdd.refs_cnt, 1);
 
-	/* Create io */
-	ret = sbdd_io_create(&__sbdd.io, __process_bio, &__sbdd);
+	/* Create raid */
+	ret = __sbdd_create_raid();
 	if(ret)
 	{
-		pr_err("creating io error=%d\n", ret);
-		return ret;
-	}
-
-	/* Create disks cluster */
-	ret = sbdd_cluster_create(&__sbdd.cluster, &__sbdd);
-	if(ret)
-	{
-		pr_err("creating cluster error=%d\n", ret);
+		pr_err("creating raid_error=%d\n", ret);
 		return ret;
 	}
 
@@ -151,12 +182,7 @@ static int sbdd_create(void)
 
 static void sbdd_delete(void)
 {
-	/* Blocking call to io */
-	sbdd_io_stop(&__sbdd.io);
-	
-	sbdd_io_destroy(&__sbdd.io);
-
-	sbdd_cluster_destroy(&__sbdd.cluster);
+	__sbdd_destroy_raid();
 
 	sbdd_free_disk(&__sbdd);
 
@@ -210,6 +236,10 @@ module_exit(sbdd_exit);
 
 /* Set desired capacity with insmod */
 module_param_named(capacity_mib, __sbdd_capacity_mib, ulong, S_IRUGO);
+/* Set raid type */
+module_param_named(raid_type, __sbdd_raid_type, ulong, S_IRUGO);
+/* Set raid type */
+module_param_named(raid_config, __sbdd_raid_config, charp, S_IRUGO);
 
 /* Note for the kernel: a free license module. A warning will be outputted without it. */
 MODULE_LICENSE("GPL");

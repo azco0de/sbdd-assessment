@@ -9,7 +9,7 @@
 #include <linux/spinlock_types.h>
 #include <linux/blk-mq.h>
 
-#include <cluster.h>
+#include <raid_0.h>
 #include <io.h>
 
 #define SBDD_SECTOR_SHIFT      9
@@ -19,12 +19,11 @@
 
 struct sbdd {
 	atomic_t                refs_cnt;
-	sector_t                capacity;
+	sector_t 				capacity;
+	struct sbdd_raid_0		raid_0;
+	struct sbdd_io 			io;
 	struct gendisk          *gd;
     struct blk_mq_tag_set   *tag_set;
-	struct task_struct 		*io_thread;
-	struct sbdd_cluster		cluster;
-	struct sbdd_io 			io;
 
 };
 
