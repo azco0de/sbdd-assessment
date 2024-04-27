@@ -33,8 +33,9 @@
 
 ccflags-y := -Wall
 
-ccflags-y += -DBLK_MQ_MODE
-# CFLAGS_sbdd.o := -DDEBUG
+#ccflags-y += -DBLK_MQ_MODE
+ccflags-y += -g -DDEBUG
+#CFLAGS_sbdd.o := -DDEBUG
 
 ccflags-y += -I$(src)/sbdd
 

@@ -7,7 +7,6 @@
 #include <trace/events/block.h>
 #include <sbdd.h>
 #include <raid_0.h>
-#include <raid_0_cfg.h>
 
 static struct sbdd_raid_0_disk* __sbdd_raid_0_create_disk(const char* name)
 {
@@ -46,7 +45,7 @@ static int __sbdd_raid_0_destroy_disk(struct sbdd_raid_0_disk* disk)
     return -EINVAL;
 }
 
-static struct sbdd_raid_0_disk* __sbdd_raid_0_map_sector_to_disk(struct sbdd_raid_0* raid_0, sector_t source_sector,sector_t* mapped_sector)
+static struct sbdd_raid_0_disk* __sbdd_raid_0_map_sector_to_disk(struct sbdd_raid_0* raid_0, sector_t source_sector, sector_t* mapped_sector)
 {
     struct sbdd_raid_0_disk* _disk = NULL;
 
@@ -55,14 +54,14 @@ static struct sbdd_raid_0_disk* __sbdd_raid_0_map_sector_to_disk(struct sbdd_rai
 	__u64 _target_sectors = 0;
 	__u32 _target_disk = 0;
 
-    _chunks_in_sectors = raid_0->strip_size << 1;
+    _chunks_in_sectors = raid_0->config.strip_size << 1;
 
 	_chunk_index = source_sector / _chunks_in_sectors;
 
-    _target_disk = (source_sector % (_chunks_in_sectors * raid_0->disks_count)) / _chunks_in_sectors;
+    _target_disk = (source_sector % (_chunks_in_sectors * raid_0->config.disks_count)) / _chunks_in_sectors;
 
     _target_sectors = source_sector;
-	_target_sectors /= _chunks_in_sectors * raid_0->disks_count;
+	_target_sectors /= _chunks_in_sectors * raid_0->config.disks_count;
 	_target_sectors *= _chunks_in_sectors;
 	_target_sectors += source_sector % _chunks_in_sectors;
 
@@ -83,6 +82,8 @@ static blk_qc_t __sbdd_raid_0_process_bio(struct sbdd_raid_0* raid_0, struct bio
         return BLK_STS_TARGET;
     }
 
+    pr_info("raid_0_process_bio:: _source_sector=%llu, _target_sector=%llu, _disk=%s", _source_sector, _target_sector, _target_disk->name);
+
     bio_set_dev(bio, _target_disk->bdev_raw);
 	bio->bi_iter.bi_sector = _target_sector;
 
@@ -102,12 +103,12 @@ int sbdd_raid_0_create(struct sbdd_raid_0* raid_0, char* cfg, void* ctx)
 {
     int _ret = 0;
     int _idx = 0;
-    sbdd_raid_0_config_t _cfg;
 
-    _ret = sbdd_raid_0_create_config(cfg, &_cfg);
+    _ret = sbdd_raid_0_create_config(cfg, &raid_0->config);
     if(_ret)
     {
         pr_err("raid_0:: parsing config error: %d \n", _ret);
+        sbdd_raid_0_destroy_config(&raid_0->config);
         return _ret;
     }
 
@@ -115,28 +116,25 @@ int sbdd_raid_0_create(struct sbdd_raid_0* raid_0, char* cfg, void* ctx)
 
     /* create raid disks*/
 
-    raid_0->disks = kzalloc(sizeof(struct sbdd_raid_0_disk*) * _cfg.disks_count, GFP_KERNEL);
+    raid_0->disks = kzalloc(sizeof(struct sbdd_raid_0_disk*) * raid_0->config.disks_count, GFP_KERNEL);
     if(!raid_0->disks)
     {
+        pr_err("raid_0:: can't alloc disks with count: %d \n", raid_0->config.disks_count);
         return -ENOMEM;
     }
 
-    for(_idx = 0; _idx < _cfg.disks_count; ++ _idx)
+    for(_idx = 0; _idx < raid_0->config.disks_count; ++ _idx)
     {
-        raid_0->disks[_idx] = __sbdd_raid_0_create_disk(_cfg.disks[_idx]);
+        raid_0->disks[_idx] = __sbdd_raid_0_create_disk(raid_0->config.disks[_idx]);
         if (!raid_0->disks[_idx]) 
         {
-            sbdd_raid_0_destroy_config(&_cfg);
             return -ENOMEM;
         }
     }
 
     raid_0->ctx = ctx;
 
-    raid_0->strip_size = _cfg.strip_size;
-    raid_0->disks_count = _cfg.disks_count;
-
-    sbdd_raid_0_destroy_config(&_cfg);
+    pr_info("raid_0:: disks count: %d, stripe size: %d \n", raid_0->config.disks_count, raid_0->config.strip_size);
 
     return 0;
 }
@@ -147,7 +145,7 @@ void sbdd_raid_0_destroy(struct sbdd_raid_0* raid_0)
     int                         _disk_idx = 0;
     struct sbdd_raid_0_disk*    _disk = NULL;
 
-    for (; _disk_idx < raid_0->disks_count; ++_disk_idx) 
+    for (; _disk_idx < raid_0->config.disks_count; ++_disk_idx) 
     {
 		_disk = raid_0->disks[_disk_idx];
         if(_disk)
@@ -155,7 +153,7 @@ void sbdd_raid_0_destroy(struct sbdd_raid_0* raid_0)
             _ret = __sbdd_raid_0_destroy_disk(_disk);
             if(_ret)
             {
-                pr_err("raid_0:: delete disk '%s' error:%d\n", _disk->name, _ret);
+                pr_err("raid_0:: delete disk '%s' error:%d \n", _disk->name, _ret);
             }
         }
     }
@@ -164,6 +162,8 @@ void sbdd_raid_0_destroy(struct sbdd_raid_0* raid_0)
     {
         kfree(raid_0->disks);
     }
+
+    sbdd_raid_0_destroy_config(&raid_0->config);
 }
 
 blk_qc_t sbdd_raid_0_process_bio(struct bio* bio)
@@ -179,7 +179,7 @@ blk_qc_t sbdd_raid_0_process_bio(struct bio* bio)
    _ret = __sbdd_raid_0_process_bio(&_dev->raid_0, bio);
    if(_ret != BLK_STS_OK)
    {
-        pr_err("raid_0:: processing bio error: %d",_ret);
+        pr_err("raid_0:: processing bio error: %d \n",_ret);
    }
 
     return _ret;

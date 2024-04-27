@@ -9,6 +9,8 @@
 #include <linux/spinlock_types.h>
 #include <linux/blk-mq.h>
 
+#include <raid_0_cfg.h>
+
 struct sbdd_raid_0_disk {
     struct block_device* bdev_raw;
     char name[DISK_NAME_LEN];
@@ -17,8 +19,7 @@ typedef struct sbdd_raid_0_disk sbdd_raid_0_disk_t;
 
 struct sbdd_raid_0 {
     void*                   ctx;
-    int                     strip_size;
-    int                     disks_count;
+    sbdd_raid_0_config_t    config;
     spinlock_t              disks_lock;
     sbdd_raid_0_disk_t**    disks;
 };

@@ -58,6 +58,13 @@ static int __sbdd_create_raid(void)
 		return ret;
 	}
 
+	ret = sbdd_io_start(&__sbdd.io);
+	if(ret)
+	{
+		pr_err("starting io error=%d\n", ret);
+		return ret;
+	}
+
 	return 0;
 }
 

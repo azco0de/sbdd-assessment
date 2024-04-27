@@ -19,6 +19,7 @@ struct sbdd_io {
 	process_bio_t           process_bio;
 	struct task_struct*     io_thread;
     atomic_t 				is_io_thread_active;
+	atomic_t 				is_io_active;
 	spinlock_t              bio_list_lock;
 	struct bio_list 		bio_list;
 };

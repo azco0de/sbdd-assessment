@@ -13,6 +13,8 @@ static int __io_io_routine(void* data)
 
     set_user_nice(current, -20);
 
+    pr_info("sbdd_io:: io thread entry \n");
+
     while (!kthread_should_stop())
     {
         wait_event_interruptible(_io->events, kthread_should_stop() || !bio_list_empty(&_io->bio_list));
@@ -32,6 +34,8 @@ static int __io_io_routine(void* data)
         _io->process_bio(_bio);
     }
 
+    pr_info("sbdd_io:: io thread exit \n");
+
     return 0;
 }
 
@@ -39,7 +43,7 @@ static int __sbdd_io_add_bio(struct sbdd_io* io, struct bio* bio)
 {
     if(sbdd_io_is_empty(io))
     {
-        pr_err("sbdd_io_add_bio:: io is empty");
+        pr_err("sbdd_io_add_bio:: io is empty \n");
 
         bio_io_error(bio);
 
@@ -48,12 +52,14 @@ static int __sbdd_io_add_bio(struct sbdd_io* io, struct bio* bio)
     
     if(!sbdd_io_is_active(io))
     {
-        pr_err("sbdd_io_add_bio:: io is not active");
+        pr_err("sbdd_io_add_bio:: io is not active \n");
 
         bio_io_error(bio);
 
         return -EINVAL;
     }
+
+    pr_info("sbdd_io_add_bio:: io is added \n");
 
     spin_lock_irq(&io->bio_list_lock);
 
@@ -97,7 +103,7 @@ blk_qc_t sbdd_io_submit_bio(struct bio *bio)
 
     if(!sbdd_io_is_active(&_dev->io))
     {
-        pr_err("sbdd_io_submit_bio:: io is not active");
+        pr_err("sbdd_io_submit_bio:: io is not active \n");
         bio_io_error(bio);
         return BLK_STS_IOERR;
     }
@@ -110,7 +116,7 @@ blk_qc_t sbdd_io_submit_bio(struct bio *bio)
 		return BLK_STS_IOERR;
     }
 
-	bio_endio(bio);
+	//bio_endio(bio);
 
 	return BLK_STS_OK;
 }
@@ -123,7 +129,7 @@ blk_status_t sbdd_io_queue_rq(struct blk_mq_hw_ctx *hctx, struct blk_mq_queue_da
 
     if(!sbdd_io_is_active(&_dev->io))
     {
-        pr_err("sbdd_io_queue_rq:: io is not active");
+        pr_err("sbdd_io_queue_rq:: io is not active \n");
         return BLK_STS_IOERR;
     }
 
@@ -143,7 +149,6 @@ blk_qc_t sbdd_io_make_request(struct request_queue *q, struct bio *bio)
 
 int sbdd_io_create(struct sbdd_io* io, process_bio_t process_bio, void* ctx)
 {
-
     bio_list_init(&io->bio_list);
 
     spin_lock_init(&io->bio_list_lock);
@@ -153,6 +158,9 @@ int sbdd_io_create(struct sbdd_io* io, process_bio_t process_bio, void* ctx)
     io->process_bio = process_bio;
     io->ctx = ctx;
 
+    atomic_set(&io->is_io_active, 1);
+    atomic_set(&io->is_io_thread_active, 0);
+    
     return 0;
 }
 
@@ -160,18 +168,23 @@ void sbdd_io_destroy(struct sbdd_io* io)
 {
     struct bio* _bio = NULL;
 
-    /* clearing bio list */
-    spin_lock_irq(&io->bio_list_lock);
-
-    pr_info("sbdd_io_destroy:: bio list size= %d \n", bio_list_size(&io->bio_list));
-
-    while(!bio_list_empty(&io->bio_list))
+    if(atomic_dec_if_positive(&io->is_io_active) > 0)
     {
-        _bio = bio_list_pop(&io->bio_list);
-        bio_io_error(_bio);
-    }
+        pr_info("sbdd_io_destroy:: destroing io\n");
 
-    spin_unlock_irq(&io->bio_list_lock);
+        /* clearing bio list */
+        spin_lock_irq(&io->bio_list_lock);
+
+        pr_info("sbdd_io_destroy:: bio list size= %d \n", bio_list_size(&io->bio_list));
+
+        while(!bio_list_empty(&io->bio_list))
+        {
+            _bio = bio_list_pop(&io->bio_list);
+            bio_io_error(_bio);
+        }
+
+        spin_unlock_irq(&io->bio_list_lock);
+    }
 }
 
 int sbdd_io_start(struct sbdd_io* io)
@@ -179,9 +192,11 @@ int sbdd_io_start(struct sbdd_io* io)
     io->io_thread = kthread_create(__io_io_routine, NULL, "io_bio_thread");
     if (IS_ERR(io->io_thread))
     {
-        pr_err("sbdd_io_init:: cannot create io thread: %ld \n", PTR_ERR(io->io_thread));
+        pr_err("sbdd_io_start:: cannot create io thread: %ld \n", PTR_ERR(io->io_thread));
         return PTR_ERR(io->io_thread);
     }
+
+    pr_info("sbdd_io_start:: io thread is ready \n");
 
     atomic_set(&io->is_io_thread_active, 1);
 
@@ -194,7 +209,7 @@ void sbdd_io_stop(struct sbdd_io* io)
 {
     int _ret = 0;
 
-    if(atomic_dec_if_positive(&io->is_io_thread_active))
+    if(atomic_dec_if_positive(&io->is_io_thread_active) > 0)
     {
         pr_info("sbdd_io_destroy:: stopping thread \n");
 
