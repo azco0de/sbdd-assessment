@@ -48,18 +48,7 @@ int sbdd_raid_0_create_config(char* cfg, sbdd_raid_0_config_t* _cfg)
 				pr_err("raid_0_config:: bad option arg (not int) at '%s'\n", cfg);
 				return -EINVAL;
 			}
-
-			pr_info("raid_0_config:: got int token %d val %d\n", _token, _intval);
-
 		} 
-        else if (_token > opt_last_int && _token < opt_last_str) 
-        {
-			pr_info("raid_0_config:: got string token %d val %s\n", _token, _argstr[0].from);
-		} 
-        else 
-        {
-			pr_info("raid_0_config:: got token %d\n", _token);
-		}
 
         switch (_token) 
         {

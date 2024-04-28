@@ -41,15 +41,6 @@ static int __io_io_routine(void* data)
 
 static int __sbdd_io_add_bio(struct sbdd_io* io, struct bio* bio)
 {
-    if(sbdd_io_is_empty(io))
-    {
-        pr_err("sbdd_io_add_bio:: io is empty \n");
-
-        bio_io_error(bio);
-
-        return -EINVAL;
-    }
-    
     if(!sbdd_io_is_active(io))
     {
         pr_err("sbdd_io_add_bio:: io is not active \n");
@@ -105,6 +96,7 @@ blk_qc_t sbdd_io_submit_bio(struct bio *bio)
     {
         pr_err("sbdd_io_submit_bio:: io is not active \n");
         bio_io_error(bio);
+        bio_endio(bio);
         return BLK_STS_IOERR;
     }
 
@@ -113,10 +105,9 @@ blk_qc_t sbdd_io_submit_bio(struct bio *bio)
     {
         pr_err("sbdd_io_submit_bio:: xfer_bio error:%d \n", _ret);
         bio_io_error(bio);
+        bio_endio(bio);
 		return BLK_STS_IOERR;
     }
-
-	//bio_endio(bio);
 
 	return BLK_STS_OK;
 }
@@ -189,7 +180,7 @@ void sbdd_io_destroy(struct sbdd_io* io)
 
 int sbdd_io_start(struct sbdd_io* io)
 {
-    io->io_thread = kthread_create(__io_io_routine, NULL, "io_bio_thread");
+    io->io_thread = kthread_create(__io_io_routine, io, "io_bio_thread");
     if (IS_ERR(io->io_thread))
     {
         pr_err("sbdd_io_start:: cannot create io thread: %ld \n", PTR_ERR(io->io_thread));

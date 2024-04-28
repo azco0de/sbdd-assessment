@@ -18,8 +18,6 @@
 #define SBDD_NAME              "sbdd"
 
 struct sbdd {
-	atomic_t                refs_cnt;
-	sector_t 				capacity;
 	struct sbdd_raid_0		raid_0;
 	struct sbdd_io 			io;
 	struct gendisk          *gd;

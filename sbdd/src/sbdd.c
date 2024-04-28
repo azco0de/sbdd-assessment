@@ -21,11 +21,10 @@
 
 static struct sbdd      __sbdd;
 static int              __sbdd_major = 0;
-static unsigned long    __sbdd_capacity_mib = 100;
 static unsigned long    __sbdd_raid_type = 0;
 static char*			__sbdd_raid_config = NULL;
 
-static int __sbdd_create_raid(void)
+static int __sbdd_create_raid(__u32* raid_capacity, __u64* max_raid_sectors)
 {
 	int ret = 0;
 
@@ -34,7 +33,7 @@ static int __sbdd_create_raid(void)
 	/* Check if raid type is supported*/
 	if(__sbdd_raid_type > 1)
 	{
-		pr_err("wrong raid type: %ld\n", __sbdd_raid_type);
+		pr_err("wrong raid type: %lu\n", __sbdd_raid_type);
 		return -ENAVAIL;
 	}
 
@@ -50,6 +49,9 @@ static int __sbdd_create_raid(void)
 		_process_bio = sbdd_raid_0_process_bio;
 	}
 
+	*raid_capacity		= sbdd_raid_0_get_capacity(&__sbdd.raid_0);
+	*max_raid_sectors	= sbdd_raid_0_get_max_sectors(&__sbdd.raid_0);
+
 	/* Create raid io */
 	ret = sbdd_io_create(&__sbdd.io, _process_bio, &__sbdd);
 	if(ret)
@@ -64,6 +66,8 @@ static int __sbdd_create_raid(void)
 		pr_err("starting io error=%d\n", ret);
 		return ret;
 	}
+
+	pr_info("created raid type: %lu, capacity: %u, sectors: %llu \n", __sbdd_raid_type, *raid_capacity, *max_raid_sectors);
 
 	return 0;
 }
@@ -112,6 +116,8 @@ static struct block_device_operations const __sbdd_bdev_ops = {
 static int sbdd_create(void)
 {
 	int ret = 0;
+	__u32 _raid_capacity = 0;
+	__u64 _raid_sectors = 0;
 
 	/*
 	This call is somewhat redundant, but used anyways by tradition.
@@ -125,7 +131,14 @@ static int sbdd_create(void)
 	}
 
 	memset(&__sbdd, 0, sizeof(struct sbdd));
-	__sbdd.capacity = (sector_t)__sbdd_capacity_mib * SBDD_MIB_SECTORS;
+
+	/* Create raid */
+	ret = __sbdd_create_raid(&_raid_capacity, &_raid_sectors);
+	if(ret)
+	{
+		pr_err("creating raid_error=%d\n", ret);
+		return ret;
+	}
 
 	pr_info("allocating disk\n");
 
@@ -141,8 +154,7 @@ static int sbdd_create(void)
 
 	/* Configure queue */
 	__sbdd.gd->queue->queuedata = &__sbdd;
-
-	blk_queue_logical_block_size(__sbdd.gd->queue, SBDD_SECTOR_SIZE);
+	blk_queue_max_hw_sectors(__sbdd.gd->queue, _raid_sectors);
 #if (BUILT_KERNEL_VERSION < KERNEL_VERSION(5, 14, 0))
 	blk_queue_make_request(__sbdd.gd->queue, sbdd_io_make_request);
 #endif
@@ -155,18 +167,8 @@ static int sbdd_create(void)
 	__sbdd.gd->fops = &__sbdd_bdev_ops;
 	/* Represents name in /proc/partitions and /sys/block */
 	scnprintf(__sbdd.gd->disk_name, DISK_NAME_LEN, SBDD_NAME);
-	set_capacity(__sbdd.gd, __sbdd.capacity);
-
-	atomic_set(&__sbdd.refs_cnt, 1);
-
-	/* Create raid */
-	ret = __sbdd_create_raid();
-	if(ret)
-	{
-		pr_err("creating raid_error=%d\n", ret);
-		return ret;
-	}
-
+	set_capacity(__sbdd.gd, _raid_capacity);
+	
 	/*
 	Allocating gd does not make it available, add_disk() required.
 	After this call, gd methods can be called at any time. Should not be
@@ -241,8 +243,6 @@ module_init(sbdd_init);
 /* Called on module unloading. Unloading module is not allowed without it. */
 module_exit(sbdd_exit);
 
-/* Set desired capacity with insmod */
-module_param_named(capacity_mib, __sbdd_capacity_mib, ulong, S_IRUGO);
 /* Set raid type */
 module_param_named(raid_type, __sbdd_raid_type, ulong, S_IRUGO);
 /* Set raid type */
